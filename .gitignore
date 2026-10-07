@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Testing & Cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Streamlit & IDE
+.streamlit/
+.DS_Store
+.idea/
+.vscode/
+
+# Data cache
+data/cache/*
+!data/cache/.gitkeep
