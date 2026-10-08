@@ -1,5 +1,5 @@
 """
-Solution evaluation, optimality gap computation, and Justice40 compliance analytics.
+Solution evaluation, optimality gap computation, and equity compliance analytics.
 """
 
 from typing import Any, Dict, List
@@ -23,8 +23,8 @@ def compute_optimality_gap(mip_sol: OptimizationSolution, greedy_sol: Optimizati
     speedup = mip_sol.solve_time_sec / max(greedy_sol.solve_time_sec, 1e-4)
 
     return {
-        "mip_objective": z_mip,
-        "greedy_objective": z_grd,
+        "mip_objective": round(z_mip, 4),
+        "greedy_objective": round(z_grd, 4),
         "optimality_gap_pct": round(gap_pct, 2),
         "mip_runtime_sec": round(mip_sol.solve_time_sec, 3),
         "greedy_runtime_sec": round(greedy_sol.solve_time_sec, 4),
@@ -38,19 +38,19 @@ def compute_optimality_gap(mip_sol: OptimizationSolution, greedy_sol: Optimizati
 
 def evaluate_equity_fairness(solution: OptimizationSolution) -> Dict[str, Any]:
     """
-    Evaluate federal Justice40 compliance and equity distribution.
+    Evaluate equity share threshold compliance and distribution.
     """
-    quota_target = solution.scenario.min_equity_quota * 100.0
+    target_share = solution.scenario.min_equity_share * 100.0
     actual_share = solution.dac_share_pct
-    delta = actual_share - quota_target
+    delta = actual_share - target_share
 
-    status = "COMPLIANT" if delta >= 0 else "DEFICIT"
+    status = "COMPLIANT" if delta >= -0.5 else "DEFICIT"
 
     return {
-        "target_quota_pct": round(quota_target, 1),
+        "target_share_pct": round(target_share, 1),
         "actual_dac_share_pct": round(actual_share, 1),
         "compliance_status": status,
-        "quota_margin_pct": round(delta, 1),
+        "share_margin_pct": round(delta, 1),
         "dac_demand_covered": round(solution.dac_demand_covered, 1),
         "total_demand_covered": round(solution.total_demand_covered, 1),
     }

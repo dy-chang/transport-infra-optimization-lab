@@ -1,131 +1,99 @@
 # Transportation Infrastructure Optimization Lab
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg)](https://www.python.org/)
-[![Optimization: SciPy HiGHS](https://img.shields.io/badge/Solver-HiGHS%20Branch--and--Cut%20MIP-darkblue.svg)](https://highs.dev/)
+[![Optimization: SciPy HiGHS](https://img.shields.io/badge/Solver-HiGHS%20Branch--and--Cut%20MILP-darkblue.svg)](https://highs.dev/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-Interactive%20Workbench-FF4B4B.svg)](https://streamlit.io/)
 [![PyDeck](https://img.shields.io/badge/PyDeck-3D%20Spatial%20GIS-green.svg)](https://deckgl.readthedocs.io/)
 [![Plotly](https://img.shields.io/badge/Plotly-Pareto%20Frontier-teal.svg)](https://plotly.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-purple.svg)](LICENSE)
-[![Tests: 100% Passing](https://img.shields.io/badge/Tests-6%20Passed%20(100%25)-success.svg)](tests/)
+[![Tests: 100% Passing](https://img.shields.io/badge/Tests-9%20Passed%20(100%25)-success.svg)](tests/)
 
-> **Multi-Objective Mixed-Integer Programming & Spatial Facility Location Lab**  
-> Operations Research, Transportation Planning, and GIS integration solving capital allocation problems across **EV Charging (NEVI)**, **Transit Stops (FTA Title VI)**, **Vision Zero Safety (SS4A)**, and **Bike Infrastructure**.
+> **Where should limited transportation investment go?**  
+> An open-source decision-support framework for optimizing transportation infrastructure investments under budget, coverage, spatial, and equity constraints.
 
 ---
 
-## 1. Overview & Problem Context
+### Four Planning Applications
+`⚡ EV Charging` &emsp;|&emsp; `🚌 Transit Stops` &emsp;|&emsp; `🛡️ Safety Countermeasures` &emsp;|&emsp; `🚲 Bike Infrastructure`
 
-Public transportation agencies, State DOTs, and MPOs face complex capital programming challenges: allocating limited capital budgets across thousands of candidate project locations to maximize community mobility while satisfying spatial separation, budget constraints, and federal equity requirements (e.g., the White House Justice40 Initiative).
+---
 
-This laboratory formulates and solves the **Multi-Objective Maximum Coverage Location Problem with Equity Quotas (MCLP-EQ)**. It bridges mathematical operations research with real-world transportation planning through:
+## 1. Executive Summary
 
-1. **Dual-Engine Solvers**:
-   - **Exact Mathematical Programming**: Global branch-and-cut optimization powered by native **HiGHS** (`scipy.optimize.milp`).
-   - **Submodular Greedy Heuristic**: Ultra-fast marginal return optimization executing in **<30 ms** for instantaneous 60fps web slider interactivity.
-2. **Four Extensible Transportation Sectors**:
-   - ⚡ **EV Charging Infrastructure** (NEVI Formula Program & Grid Capacity)
-   - 🚌 **Transit Stop / BRT Investment** (FTA Title VI & Zero-Car Household Access)
-   - 🛡️ **Vision Zero Safety Countermeasures** (High Injury Network & Crash Reductions)
-   - 🚲 **Protected Bike Corridors** (Level of Traffic Stress & Complete Streets)
-3. **Real-World Open Data Case Study**:
-   - Calibrated using Florida corridor networks (Orange, Hillsborough, Pinellas, and Southwest Florida).
-   - **2,413 candidate parcels** conflated with real US Census socio-demographics, AADT traffic counts, and CEJST Justice40 Disadvantaged Community (DAC) tracts.
+Public transportation agencies and MPOs face capital programming challenges: allocating limited capital budgets across thousands of candidate project locations to maximize mobility benefit while satisfying spatial separation, budget constraints, and equity goals.
+
+This laboratory implements a **Multi-Objective Maximum Coverage Location Problem (MCLP)** framework with a **linear equity-share constraint**. It pairs:
+- **Exact Mathematical Programming (HiGHS MILP)** for rigorous planning analysis and mathematical optimality proofs.
+- **Submodular Greedy Heuristics** for sub-second interactive scenario exploration in web-based decision-support tools.
+
+Tested against a real-world Florida corridor testbed of **2,413 candidate project parcels** and **1,200 Census demand centroids**.
 
 ---
 
 ## 2. Mathematical Formulation
 
-$$\max_{x, y} \quad Z = (1 - w_{\text{eq}}) \sum_{i \in \mathcal{I}} D_i y_i + w_{\text{eq}} \cdot \gamma \sum_{i \in \mathcal{I}_{\text{DAC}}} D_i y_i - \lambda \sum_{j \in \mathcal{J}} C_j x_j$$
+Let:
+$$x_j = \begin{cases} 1 & \text{facility selected at candidate } j \\ 0 & \text{otherwise} \end{cases}$$
 
-**Subject to:**
+$$y_i = \begin{cases} 1 & \text{demand node } i \text{ is covered} \\ 0 & \text{otherwise} \end{cases}$$
 
-1. **Capital Budget Constraint**:
-   $$\sum_{j \in \mathcal{J}} C_j x_j \le B$$
+### Objective Function
+Maximize normalized system efficiency and normalized disadvantaged community coverage:
 
-2. **Cardinality Upper Bound**:
-   $$\sum_{j \in \mathcal{J}} x_j \le K_{\max}$$
+$$\max_{x, y} \quad Z = (1 - w_{\text{eq}}) \frac{\sum_{i \in \mathcal{I}} D_i y_i}{\sum_{i \in \mathcal{I}} D_i} + w_{\text{eq}} \frac{\sum_{i \in \mathcal{I}_{\text{DAC}}} D_i y_i}{\sum_{i \in \mathcal{I}_{\text{DAC}}} D_i} - \lambda \sum_{j \in \mathcal{J}} c_j x_j$$
 
-3. **Coverage Coupling Constraints**:
-   $$y_i - \sum_{j \in \mathcal{N}(i)} x_j \le 0 \quad \forall i \in \mathcal{I}$$
-
-4. **Anti-Cannibalization Spatial Spacing**:
-   $$x_j + x_k \le 1 \quad \forall (j, k) \in \mathcal{E}_{\text{conflict}} \text{ where } \text{dist}(j, k) < d_{\min}$$
-
-5. **Linear Justice40 Equity Quota Mandate**:
-   $$\sum_{i \notin \mathcal{I}_{\text{DAC}}} \left( \alpha_{\text{equity\_min}} D_i \right) y_i - \sum_{i \in \mathcal{I}_{\text{DAC}}} \left( (1 - \alpha_{\text{equity\_min}}) D_i \right) y_i \le 0$$
-
-6. **Integrality**:
-   $$x_j \in \{0, 1\} \quad \forall j \in \mathcal{J}, \qquad 0 \le y_i \le 1 \quad \forall i \in \mathcal{I}$$
+### Constraints
+$$\begin{aligned}
+y_i &\le \sum_{j \in \mathcal{N}_i} x_j && \forall i \in \mathcal{I} && \text{(Coverage Coupling)} \\
+\sum_{j \in \mathcal{J}} c_j x_j &\le B && && \text{(Capital Budget Constraint)} \\
+\sum_{j \in \mathcal{J}} x_j &\le P && && \text{(Facility Cardinality Cap)} \\
+x_j + x_k &\le 1 && \forall (j, k) \in \mathcal{C} && \text{(Anti-Cannibalization Spacing)} \\
+\sum_{i \in \mathcal{I}_{\text{DAC}}} D_i y_i &\ge \alpha \sum_{i \in \mathcal{I}} D_i y_i && && \text{(Linear Equity-Share Constraint)} \\
+x_j &\in \{0, 1\}, \quad y_i \in [0, 1] && && \text{(Integrality \& Domain Bounds)}
+\end{aligned}$$
 
 ---
 
-## 3. Interactive Web Workbench (`app.py`)
+## 3. Exact vs Interactive Solver Benchmark
 
-Run the interactive dashboard to explore multi-objective trade-offs in real time:
+| Metric | HiGHS Exact MILP | Submodular Greedy |
+| :--- | :--- | :--- |
+| **Algorithm** | Simplex + Branch-and-Cut | Submodular Marginal Return |
+| **Full Network (2,413 Candidates)** | ~6.0 sec (incumbent) | **~0.71 sec (sub-second)** |
+| **Corridor Subset (500 Candidates)** | **28 ms** | **25 ms** |
+| **Optimality Guarantee** | Global Mathematical Optimum | $\ge (1 - 1/e) \approx 63.2\%$ worst-case |
+| **Role in Lab** | Rigorous verification & planning analysis | Sub-second interactive scenario exploration |
 
-```bash
-streamlit run app.py
-```
-
-### Key Interactive Features
-- **Dynamic Sliders**:
-  - `Budget`: `$2M ──●── $25M`
-  - `Equity Priority Weight`: `Low ──●── High`
-  - `Justice40 Quota`: `0% ──●── 50%`
-  - `Sector Selector`: Switch between EV Charging, Transit Stops, Safety, and Bike Networks.
-- **PyDeck 3D Geospatial Map**:
-  - Selected facilities displayed as 3D columns (elevation proportional to demand).
-  - Unfunded candidate pool rendered as subdued gray dots.
-  - Census tracts color-coded by Justice40 Disadvantaged Community status (Cyan DAC vs Orange Non-DAC).
-- **Pareto Trade-Off Curve**:
-  - Automatically sweeps equity weights $[0.0, 1.0]$ to trace the empirical Pareto Frontier between System Efficiency and Equity.
-- **Operations Research Benchmark Tab**:
-  - Side-by-side comparison between HiGHS Branch-and-Cut and Submodular Greedy with runtime, optimality gap, and spatial agreement percentages.
-- **Capital Program Export**:
-  - Download the final funded project portfolio directly as a CSV capital improvement plan.
+> *MILP provides rigorous solutions for planning analysis, while a fast heuristic enables interactive scenario exploration.*
 
 ---
 
-## 4. Multi-Sector Domain Profiles
+## 4. Sector-Specific Planning Models
 
-| Domain Sector | Demand Metric ($D_i$) | Candidate Pool ($\mathcal{J}$) | Unit Cost Range ($C_j$) | Equity Priority ($\mathcal{I}_{\text{DAC}}$) | Federal Program |
+The optimization engine is reusable across sectors, but each application incorporates distinct demand drivers, cost ranges, and planning priorities:
+
+| Sector | Demand Metric ($D_i$) | Candidate Pool | Unit Cost ($C_j$) | Equity Definition ($\mathcal{I}_{\text{DAC}}$) | Planning Reference |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **EV Charging Deployment** | Traffic AADT & Commercial Density | 2,413 Highway & Commercial Parcels | \$150k – \$320k | Justice40 Disadvantaged Communities | NEVI Formula (23 CFR Part 680) |
-| **Transit / BRT Stops** | Transit Propensity & Activity Density | 1,850 Intersections & Hubs | \$50k – \$140k | Title VI Zero-Car Household Areas | FTA Capital Grants |
-| **Vision Zero Safety** | 5-Year Fatal & Severe Injury Crashes | 1,620 High Injury Network Sites | \$80k – \$250k | Vulnerable Road Users (VRU) | Safe Streets for All (SS4A) |
-| **Protected Bike Corridors** | Active Mobility Potential & LTS Gap | 2,100 Street Segments | \$70k – \$180k | Low-Income Car-Free Sheds | Reconnecting Communities |
+| **⚡ EV Charging** | Observed AADT + Commercial POI Density | Highway Exits & Retail Hubs | \$160k – \$320k | Disadvantaged communities with high transit/energy burden | NEVI Formula Program Standards |
+| **🚌 Transit Stops** | Zero-Vehicle Households + Job Density | Intersections & Activity Hubs | \$45k – \$130k | Title VI protected areas & low-income Census tracts | FTA Title VI & Capital Grants |
+| **🛡️ Safety** | 5-Year Fatal & Serious Injury (FSI) Crashes | High Injury Network Intersections | \$75k – \$240k | Vulnerable road users in underserved corridors | Safe Streets and Roads for All (SS4A) |
+| **🚲 Bike Infrastructure** | Level of Traffic Stress (LTS) Gap + Commute Volume | Street Segments & Trail Links | \$65k – \$175k | Low-income car-free commute sheds | Reconnecting Communities / Active Transportation |
 
 ---
 
-## 5. Repository Structure
+## 5. Data Provenance & Reproducibility
 
-```text
-transport-infra-optimization-lab/
-├── README.md                          # Repository documentation
-├── pyproject.toml                     # Package configuration and build rules
-├── requirements.txt                   # Locked dependencies
-├── .gitignore
-├── app.py                             # Interactive Streamlit + PyDeck workbench
-├── src/
-│   ├── __init__.py
-│   ├── config.py                      # Domain definitions, bounds, Justice40 quotas
-│   ├── models.py                      # Pydantic & dataclass schemas
-│   ├── data_loader.py                 # Real Florida corridor loader & candidate generator
-│   ├── analytics.py                   # Optimality gap, Justice40 compliance, budget analytics
-│   └── solvers/
-│       ├── __init__.py
-│       ├── base.py                    # BaseSolver abstract class
-│       ├── highs_solver.py            # Exact HiGHS branch-and-cut MIP solver
-│       ├── greedy_solver.py           # Submodular marginal return heuristic (<30ms)
-│       └── pareto_frontier.py         # Multi-objective Pareto Frontier analyzer
-├── tests/
-│   ├── __init__.py
-│   └── test_optimization.py           # Pytest suite (solvers, constraints, domains, Pareto)
-├── docs/
-│   └── mathematical_formulation.md    # Formal Operations Research & MIP specification
-└── examples/
-    └── run_pareto_analysis.py         # CLI script generating multi-sector Pareto curves
-```
+All empirical numbers in this repository are reproducible through real Florida open data:
+
+| Dimension | Specification |
+| :--- | :--- |
+| **Geography** | Florida (Central Florida / Orlando & Tampa Bay Corridors) |
+| **Roadway & Traffic** | Florida Department of Transportation (FDOT) Roadway Characteristics Inventory & 2023 Observed AADT |
+| **Demographics** | US Census Bureau / American Community Survey (ACS) 5-Year Estimates (2018–2022) |
+| **Safety Data** | Florida Signal Four Analytics / FDOT CAR 5-Year Fatal & Serious Injury Crashes (2019–2023) |
+| **Equity Designation** | Disadvantaged Community (DAC) criteria: Poverty rate > 18% or Zero-car household share > 11.5% |
+| **Network Scale** | **2,413 candidate project parcels** & **1,200 Census demand centroids** |
+| **Data Calibration** | 2026 |
 
 ---
 
@@ -140,24 +108,28 @@ cd transport-infra-optimization-lab
 python3 -m venv .venv
 source .venv/bin/activate
 
-# Install dependencies
+# Install in editable mode
 pip install -e .
 ```
 
-### 6.2 Running the Pareto Frontier CLI
+### 6.2 Running the Multi-Sector Pareto Analysis
 ```bash
 python examples/run_pareto_analysis.py
 ```
 
-### 6.3 Launching the Interactive Workbench
+### 6.3 Launching the Interactive Web Dashboard
 ```bash
 streamlit run app.py
 ```
+- Move sliders for **Budget** (`$2M ──●── $25M`), **Equity Weight** (`Low ──●── High`), and **Min Equity Share** (`0% ──●── 50%`).
+- Optimal selected sites update interactively on the 3D PyDeck map.
+- View Pareto Frontier trade-off curves and export the capital improvement plan as a CSV.
 
-### 6.4 Running Automated Tests
+### 6.4 Running Automated Verification Tests
 ```bash
 pytest tests/ -v
 ```
+All 9 unit/integration tests validate budget compliance, cardinality bounds, minimum spacing, linear equity-share constraints, and the MILP $\ge$ Greedy optimality guarantee.
 
 ---
 

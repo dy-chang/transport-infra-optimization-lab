@@ -17,7 +17,7 @@ import plotly.graph_objects as go
 import pydeck as pdk
 import streamlit as st
 
-from src.config import DOMAIN_PROFILES, DomainProfile
+from src.config import DATA_PROVENANCE, SECTOR_PROFILES, SectorProfile
 from src.data_loader import InfrastructureDataLoader
 from src.models import ScenarioConfig
 from src.solvers.greedy_solver import GreedyCoverageSolver
@@ -32,7 +32,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Custom Styling
 st.markdown("""
 <style>
     .metric-container {
@@ -50,34 +49,33 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Header Section
 st.title("⚡ Transportation Infrastructure Optimization Lab")
 st.markdown("""
-**Operations Research • Mathematical Programming (MIP) • Spatial GIS Capital Allocation**  
-Solves the Multi-Objective Maximum Coverage Location Problem (MCLP) across **EV Charging**, **Transit Stops**, **Vision Zero Safety**, and **Bike Networks**.
+**Where should limited transportation investment go?**  
+An open-source decision-support framework optimizing capital allocations across **EV Charging**, **Transit Stops**, **Vision Zero Safety**, and **Bike Infrastructure**.
 """)
 
 # Sidebar Controls
 st.sidebar.header("🎯 Sector & Scenario Controls")
 
-sector_icons = {
-    "EV_CHARGING": "⚡ EV Charging (NEVI)",
-    "TRANSIT_STOPS": "🚌 Transit Stops (FTA)",
-    "SAFETY_VISION_ZERO": "🛡️ Safety Vision Zero (SS4A)",
-    "BIKE_MICROMOBILITY": "🚲 Bike Infrastructure",
-}
-
 domain_id = st.sidebar.selectbox(
     "Infrastructure Sector:",
-    options=list(DOMAIN_PROFILES.keys()),
-    format_func=lambda x: sector_icons.get(x, x),
+    options=list(SECTOR_PROFILES.keys()),
+    format_func=lambda x: f"{SECTOR_PROFILES[x].icon} {SECTOR_PROFILES[x].short_title}",
 )
-profile = DOMAIN_PROFILES[domain_id]
-st.sidebar.caption(f"**Program**: {profile.federal_program}")
+profile = SECTOR_PROFILES[domain_id]
 
-# Sliders
-st.sidebar.subheader("💰 Capital & Cardinality")
+# Show Sector Planning Details
+with st.sidebar.expander("ℹ️ Sector Planning Model Details", expanded=False):
+    st.write(f"**Policy Framework**: {profile.policy_reference}")
+    st.write(f"**Demand Metrics**: {', '.join(profile.demand_components)}")
+    st.write(f"**Equity Target**: {', '.join(profile.equity_components)}")
+    st.write(f"**Unit Cost**: ${profile.unit_cost_min:,.0f} – ${profile.unit_cost_max:,.0f}")
+
+st.sidebar.subheader("💰 Capital Budget & Facilities")
 budget = st.sidebar.slider(
-    "Investment Budget ($M):",
+    "Capital Budget ($M):",
     min_value=float(profile.min_budget / 1_000_000),
     max_value=float(profile.max_budget / 1_000_000),
     value=float(profile.default_budget / 1_000_000),
@@ -86,9 +84,9 @@ budget = st.sidebar.slider(
 ) * 1_000_000.0
 
 max_facilities = st.sidebar.slider(
-    "Max Facilities to Fund:",
+    "Max Facilities to Fund (P):",
     min_value=5,
-    max_value=120,
+    max_value=100,
     value=profile.default_max_facilities,
     step=5,
 )
@@ -103,19 +101,19 @@ equity_weight = st.sidebar.slider(
     help="0.0 = Pure System Demand Efficiency | 1.0 = Pure Disadvantaged Community (DAC) Prioritization"
 )
 
-min_equity_quota = st.sidebar.slider(
-    "Justice40 Minimum Quota (%):",
+min_equity_share = st.sidebar.slider(
+    "Equity Coverage Constraint: Min DAC Share (α):",
     min_value=0.0,
-    max_value=50.0,
-    value=profile.default_equity_quota * 100.0,
+    max_value=60.0,
+    value=profile.default_min_equity_share * 100.0,
     step=5.0,
     format="%d%%",
-    help="Federal requirement that a minimum share of total benefits accrue to disadvantaged communities."
+    help="Configurable minimum share of covered demand attributable to designated disadvantaged communities."
 ) / 100.0
 
 st.sidebar.subheader("📐 Spatial Constraints")
 cov_radius = st.sidebar.slider(
-    "Service Coverage Radius (miles):",
+    "Coverage Service Radius (miles):",
     min_value=0.3,
     max_value=5.0,
     value=profile.coverage_radius_miles,
@@ -123,34 +121,35 @@ cov_radius = st.sidebar.slider(
 )
 
 min_spacing = st.sidebar.slider(
-    "Min Spacing (Anti-Cannibalization, miles):",
+    "Min Facility Spacing (miles):",
     min_value=0.0,
     max_value=3.0,
     value=profile.min_spacing_miles,
     step=0.1,
+    help="Anti-cannibalization constraint preventing facility redundancy within close proximity."
 )
 
 solver_mode = st.sidebar.radio(
-    "Solver Engine:",
+    "Optimization Engine:",
     options=["greedy", "highs"],
-    format_func=lambda x: "⚡ Fast Submodular Greedy (<30ms)" if x == "greedy" else "🎯 Exact HiGHS MIP (Global Optimum)"
+    format_func=lambda x: "⚡ Fast Submodular Greedy (Sub-second interactive)" if x == "greedy" else "🎯 Exact HiGHS MIP (Global Optimum)"
 )
 
 
-@st.cache_data(show_spinner="Loading real Florida transportation corridors & candidate sites...")
-def get_cached_testbed(d_id: str):
+@st.cache_data(show_spinner="Loading Florida corridor testbed (2,413 candidates & 1,200 demand nodes)...")
+def get_cached_testbed(sec_id: str):
     loader = InfrastructureDataLoader(seed=42)
-    return loader.generate_testbed(domain_id=d_id, n_candidates=2413, n_demand_nodes=1200)
+    return loader.generate_testbed(sector_id=sec_id, n_candidates=2413, n_demand_nodes=1200)
 
 
 candidates, demand_nodes, dist_cand_to_dem, dist_cand_to_cand = get_cached_testbed(domain_id)
 
 scenario = ScenarioConfig(
-    domain_id=domain_id,
+    sector_id=domain_id,
     budget=budget,
     max_facilities=max_facilities,
     equity_weight=equity_weight,
-    min_equity_quota=min_equity_quota,
+    min_equity_share=min_equity_share,
     coverage_radius_miles=cov_radius,
     min_spacing_miles=min_spacing,
     solver_type=solver_mode,
@@ -186,28 +185,29 @@ with k3:
         delta=f"{solution.total_demand_covered:,.0f} Total Units"
     )
 with k4:
-    equity_status = "normal" if solution.is_equity_quota_met else "inverse"
+    equity_status = "normal" if solution.is_equity_share_met else "inverse"
     st.metric(
-        label="Justice40 DAC Share",
+        label="Disadvantaged Community Share",
         value=f"{solution.dac_share_pct:.1f}%",
-        delta=f"Target: ≥{min_equity_quota*100:.0f}% ({'PASS' if solution.is_equity_quota_met else 'DEFICIT'})",
+        delta=f"Target: ≥{min_equity_share*100:.0f}% ({'MET' if solution.is_equity_share_met else 'DEFICIT'})",
         delta_color=equity_status
     )
 with k5:
     st.metric(
         label="Solver Latency",
-        value=f"{solution.solve_time_sec * 1000:.1f} ms",
+        value=f"{solution.solve_time_sec * 1000:.1f} ms" if solution.solve_time_sec < 1.0 else f"{solution.solve_time_sec:.2f} s",
         delta=solution.solver_name.split()[0]
     )
 
 st.markdown("---")
 
 # Main Dashboard Tabs
-tab_map, tab_pareto, tab_comparison, tab_table = st.tabs([
-    "🗺️ Interactive Spatial Allocation (PyDeck 3D)",
-    "📈 Pareto Frontier & Equity Trade-Off",
-    "⚖️ OR Solver Comparison (MIP vs Greedy)",
-    "📋 Funded Project Capital Program"
+tab_map, tab_pareto, tab_comparison, tab_table, tab_provenance = st.tabs([
+    "🗺️ Spatial Allocation (PyDeck 3D)",
+    "📈 Pareto Frontier (Efficiency vs Equity)",
+    "⚖️ Exact MIP vs Heuristic Benchmark",
+    "📋 Funded Project Program",
+    "📚 Data Provenance & Methodology"
 ])
 
 selected_set = set(solution.selected_site_ids)
@@ -216,7 +216,6 @@ covered_set = set(solution.covered_node_ids)
 with tab_map:
     st.subheader(f"Optimal Infrastructure Deployment: {profile.name}")
 
-    # Build PyDeck DataFrame for Candidates
     cand_df = pd.DataFrame([
         {
             "site_id": c.site_id,
@@ -228,12 +227,10 @@ with tab_map:
             "is_selected": c.site_id in selected_set,
             "radius": 450 if c.site_id in selected_set else 180,
             "elevation": 1200 if c.site_id in selected_set else 50,
-            "color": [245, 175, 25, 230] if c.site_id in selected_set else [140, 140, 140, 90],
         }
         for c in candidates
     ])
 
-    # Build PyDeck DataFrame for Demand Centroids
     dem_df = pd.DataFrame([
         {
             "node_id": d.node_id,
@@ -242,7 +239,6 @@ with tab_map:
             "demand": d.demand,
             "is_dac": d.is_dac,
             "is_covered": d.node_id in covered_set,
-            # Cyan for Justice40 DAC, Orange for non-DAC
             "color": [0, 200, 255, 180] if d.is_dac else [255, 100, 50, 140],
             "radius": 220 if d.is_covered else 120,
         }
@@ -255,7 +251,6 @@ with tab_map:
     mean_lat = float(selected_cands["lat"].mean()) if not selected_cands.empty else float(cand_df["lat"].mean())
     mean_lon = float(selected_cands["lon"].mean()) if not selected_cands.empty else float(cand_df["lon"].mean())
 
-    # Candidate layers
     sel_layer = pdk.Layer(
         "ColumnLayer",
         data=selected_cands,
@@ -304,23 +299,22 @@ with tab_map:
     )
     st.pydeck_chart(deck)
 
-    # Legend & Caption
     c_leg1, c_leg2, c_leg3 = st.columns(3)
     with c_leg1:
         st.markdown("🟡 **Selected Facilities** (Gold Columns, Funded)")
     with c_leg2:
-        st.markdown("🔵 **Justice40 DAC Equity Zones** (Cyan Dots)")
+        st.markdown("🔵 **Disadvantaged Community Demand** (Cyan Dots)")
     with c_leg3:
-        st.markdown("⚪ **Unselected Candidates** (Gray Dots)")
+        st.markdown("⚪ **Unfunded Candidates** (Gray Dots)")
 
 with tab_pareto:
     st.subheader("Multi-Objective Pareto Trade-Off Frontier")
     st.markdown("""
     Traces the empirical mathematical trade-off between **Total System Efficiency** (Total Demand Covered) 
-    and **Federal Equity** (Justice40 DAC Demand Covered) across the full parameter spectrum of $w_{\\text{eq}} \\in [0, 1]$.
+    and **Equity** (Disadvantaged Community Demand Covered) across the full parameter spectrum of $w_{\\text{eq}} \\in [0, 1]$.
     """)
 
-    with st.spinner("Sweeping equity weights and generating Pareto Frontier..."):
+    with st.spinner("Generating multi-objective Pareto Frontier..."):
         analyzer = ParetoFrontierAnalyzer()
         frontier = analyzer.generate_frontier(
             scenario, candidates, demand_nodes, dist_cand_to_dem, dist_cand_to_cand
@@ -330,7 +324,7 @@ with tab_pareto:
         {
             "Equity Weight": p.equity_weight,
             "Total Demand Covered": p.efficiency_score,
-            "Justice40 DAC Demand": p.equity_score,
+            "DAC Demand Covered": p.equity_score,
             "DAC Share %": p.dac_share_pct,
             "Total Cost ($M)": p.total_cost / 1_000_000.0,
             "Facilities Funded": p.selected_count,
@@ -341,15 +335,15 @@ with tab_pareto:
     fig_pareto = px.line(
         p_df,
         x="Total Demand Covered",
-        y="Justice40 DAC Demand",
+        y="DAC Demand Covered",
         text="Equity Weight",
         markers=True,
-        title="Empirical Pareto Frontier: Efficiency vs Equity Trade-Off",
-        labels={"Total Demand Covered": "System Efficiency (Total Demand)", "Justice40 DAC Demand": "Federal Equity (DAC Demand)"}
+        title="Empirical Pareto Frontier: System Efficiency vs Equity Coverage",
+        labels={"Total Demand Covered": "System Efficiency (Total Demand)", "DAC Demand Covered": "Equity (Disadvantaged Community Demand)"}
     )
     fig_pareto.update_traces(textposition="top right")
 
-    # Add current operating point
+    # Mark current solution
     fig_pareto.add_trace(go.Scatter(
         x=[solution.total_demand_covered],
         y=[solution.dac_demand_covered],
@@ -365,50 +359,42 @@ with tab_pareto:
 with tab_comparison:
     st.subheader("Operations Research Benchmark: HiGHS Exact MIP vs Submodular Greedy")
     st.markdown("""
-    Direct mathematical comparison between global branch-and-cut optimization and the submodular greedy heuristic.
+    Direct mathematical comparison between global branch-and-cut optimization and the submodular greedy heuristic.  
+    *MILP provides rigorous solutions for planning analysis, while a fast heuristic enables interactive scenario exploration.*
     """)
 
-    if st.button("🚀 Run Comparative Benchmark on Current Scenario"):
-        with st.spinner("Solving with HiGHS Branch-and-Cut and Submodular Greedy..."):
-            mip_sol = HiGHSMIPSolver().solve(scenario, candidates, demand_nodes, dist_cand_to_dem, dist_cand_to_cand)
-            grd_sol = GreedyCoverageSolver().solve(scenario, candidates, demand_nodes, dist_cand_to_dem, dist_cand_to_cand)
-            gap = compute_optimality_gap(mip_sol, grd_sol)
+    c_bench1, c_bench2 = st.columns([1, 1])
+    with c_bench1:
+        st.markdown("""
+        | Metric | HiGHS Exact MILP | Submodular Greedy |
+        | :--- | :--- | :--- |
+        | **Algorithm** | Simplex + Branch-and-Cut | Submodular Marginal Return |
+        | **Optimality Guarantee** | Global Mathematical Optimum | $\ge (1 - 1/e) \approx 63.2\%$ worst-case |
+        | **Solve Time** | Rigorous Planning Analysis | Sub-second Interactive Exploration |
+        """)
 
-            c_comp1, c_comp2, c_comp3 = st.columns(3)
-            with c_comp1:
-                st.metric(
-                    label="HiGHS Objective Value",
-                    value=f"{gap['mip_objective']:,.1f}",
-                    delta=f"{gap['mip_runtime_sec']:.3f} s"
-                )
-            with c_comp2:
-                st.metric(
-                    label="Greedy Objective Value",
-                    value=f"{gap['greedy_objective']:,.1f}",
-                    delta=f"{gap['greedy_runtime_sec']:.4f} s"
-                )
-            with c_comp3:
-                st.metric(
-                    label="Optimality Gap",
-                    value=f"{gap['optimality_gap_pct']:.2f}%",
-                    delta=f"{gap['speedup_factor']:.0f}x Speedup"
-                )
+    with c_bench2:
+        if st.button("🚀 Run Live Solver Comparison on Current Scenario"):
+            with st.spinner("Executing HiGHS Branch-and-Cut and Submodular Greedy..."):
+                mip_sol = HiGHSMIPSolver().solve(scenario, candidates, demand_nodes, dist_cand_to_dem, dist_cand_to_cand)
+                grd_sol = GreedyCoverageSolver().solve(scenario, candidates, demand_nodes, dist_cand_to_dem, dist_cand_to_cand)
+                gap = compute_optimality_gap(mip_sol, grd_sol)
 
-            st.write(f"**Spatial Site Agreement**: {gap['solution_agreement_pct']}% of selected facility locations match identically between the two solvers.")
+                st.write(f"**HiGHS Runtime**: {gap['mip_runtime_sec']:.3f} s | **Objective**: {gap['mip_objective']:.4f}")
+                st.write(f"**Greedy Runtime**: {gap['greedy_runtime_sec']*1000:.1f} ms | **Objective**: {gap['greedy_objective']:.4f}")
+                st.write(f"**Optimality Gap**: {gap['optimality_gap_pct']:.2f}% | **Speedup**: {gap['speedup_factor']:.0f}x")
+                st.write(f"**Site Agreement**: {gap['solution_agreement_pct']}% of selected locations match.")
 
 with tab_table:
     st.subheader("Capital Investment Program: Selected Facility Projects")
-    
     sel_sites = [c for c in candidates if c.site_id in selected_set]
     table_df = pd.DataFrame([
         {
             "Project ID": s.site_id,
-            "Location / Name": s.name,
+            "Location Name": s.name,
             "Latitude": round(s.latitude, 5),
             "Longitude": round(s.longitude, 5),
             "Capital Cost ($)": f"${s.cost:,.0f}",
-            "Grid Capacity (kW)": s.attributes.get("grid_capacity_kw", "N/A"),
-            "Parking Stalls": s.attributes.get("parking_stalls", "N/A"),
         }
         for s in sel_sites
     ])
@@ -418,6 +404,21 @@ with tab_table:
     st.download_button(
         label="📥 Download Capital Investment Program (CSV)",
         data=csv_data,
-        file_name=f"capital_investment_{domain_id}_{int(budget/1_000_000)}M.csv",
+        file_name=f"capital_program_{domain_id}_{int(budget/1_000_000)}M.csv",
         mime="text/csv"
     )
+
+with tab_provenance:
+    st.subheader("Open Data Provenance & Methodology")
+    st.markdown(f"""
+    ### Data Sources & Attribution
+    - **Roadway Network & Traffic Counts**: {DATA_PROVENANCE['fdot_roadway']}
+    - **Socio-Demographics & Vehicle Ownership**: {DATA_PROVENANCE['census_demographics']}
+    - **Safety & Crash Records**: {DATA_PROVENANCE['crash_records']}
+    - **Equity Screening**: {DATA_PROVENANCE['equity_designation']}
+    
+    ### Geographic Scope & Scale
+    - **Geography**: {DATA_PROVENANCE['geography']}
+    - **Candidate Site Pool**: {DATA_PROVENANCE['candidate_sites_count']:,} potential locations
+    - **Demand Centroids**: {DATA_PROVENANCE['demand_nodes_count']:,} spatial census zones
+    """)

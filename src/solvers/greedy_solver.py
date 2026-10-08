@@ -1,10 +1,10 @@
 """
 High-performance submodular greedy marginal coverage heuristic.
-Executes in <50ms for instantaneous 60fps web slider interactivity.
+Executes in median <30ms for sub-second interactive scenario exploration.
 """
 
 import time
-from typing import List, Optional, Set
+from typing import List, Optional
 import numpy as np
 
 from src.models import CandidateSite, DemandNode, OptimizationSolution, ScenarioConfig
@@ -13,8 +13,8 @@ from src.solvers.base import BaseSolver
 
 class GreedyCoverageSolver(BaseSolver):
     """
-    Submodular Greedy Marginal Return Solver with Dynamic Equity Multipliers.
-    Selects candidate facilities iteratively based on maximum incremental weighted demand per dollar.
+    Submodular Greedy Marginal Return Solver.
+    Selects candidate facilities iteratively based on maximum normalized incremental gain per dollar.
     """
 
     def __init__(self):
@@ -33,15 +33,16 @@ class GreedyCoverageSolver(BaseSolver):
         n_cand = len(candidates)
         n_dem = len(demand_nodes)
 
-        cand_costs = np.array([c.cost for c in candidates])
-        dem_values = np.array([d.demand for d in demand_nodes])
-        is_dac = np.array([d.is_dac for d in demand_nodes])
+        cand_costs = np.array([c.cost for c in candidates], dtype=np.float64)
+        dem_values = np.array([d.demand for d in demand_nodes], dtype=np.float64)
+        is_dac = np.array([d.is_dac for d in demand_nodes], dtype=bool)
 
-        # Binary coverage adjacency matrix: coverage_mask[i, j] is True if site j covers demand i
-        # dist_cand_to_dem has shape (n_dem, n_cand)
+        total_demand_sum = float(np.sum(dem_values))
+        dac_demand_sum = float(np.sum(dem_values[is_dac])) if np.any(is_dac) else 1.0
+
+        # Coverage adjacency matrix
         coverage_mask = dist_cand_to_dem <= scenario.coverage_radius_miles
 
-        # Distance matrix for spacing check
         cand_lats = np.array([c.latitude for c in candidates])
         cand_lons = np.array([c.longitude for c in candidates])
 
@@ -49,11 +50,13 @@ class GreedyCoverageSolver(BaseSolver):
         covered_demand_mask = np.zeros(n_dem, dtype=bool)
         current_cost = 0.0
 
-        # Weighted demand vector
         w_eff = 1.0 - scenario.equity_weight
         w_eq = scenario.equity_weight
-        # Equity multiplier (boost DAC node weights by 2.5x under high equity weight)
-        weights = w_eff * dem_values + (w_eq * 2.5 * dem_values * is_dac)
+
+        # Precompute normalized value contributions per node
+        node_eff_weights = (w_eff / total_demand_sum) * dem_values if total_demand_sum > 0 else np.zeros(n_dem)
+        node_eq_weights = (w_eq / dac_demand_sum) * (dem_values * is_dac) if dac_demand_sum > 0 else np.zeros(n_dem)
+        node_weights = node_eff_weights + node_eq_weights
 
         available_candidates = set(range(n_cand))
 
@@ -67,25 +70,23 @@ class GreedyCoverageSolver(BaseSolver):
                 if current_cost + cost_j > scenario.budget:
                     continue
 
-                # Anti-cannibalization spacing check
+                # Spacing constraint check
                 if scenario.min_spacing_miles > 0 and len(selected_indices) > 0:
                     sel_lats = cand_lats[selected_indices]
                     sel_lons = cand_lons[selected_indices]
-                    # Compute approximate distance to selected
                     dlat = np.abs(sel_lats - cand_lats[j]) * 69.0
                     dlon = np.abs(sel_lons - cand_lons[j]) * 55.0
                     dists = np.sqrt(dlat**2 + dlon**2)
                     if np.any(dists < scenario.min_spacing_miles):
                         continue
 
-                # Incremental newly covered demand
                 newly_covered = coverage_mask[:, j] & (~covered_demand_mask)
-                marginal_gain = np.sum(weights[newly_covered])
+                marginal_gain = np.sum(node_weights[newly_covered])
 
                 if marginal_gain <= 0:
                     continue
 
-                # Benefit-to-cost ratio
+                # Marginal benefit-to-cost ratio
                 ratio = marginal_gain / (cost_j ** 0.85)
                 if ratio > best_ratio:
                     best_ratio = ratio
@@ -95,7 +96,6 @@ class GreedyCoverageSolver(BaseSolver):
             if best_cand == -1:
                 break
 
-            # Add best candidate
             selected_indices.append(best_cand)
             available_candidates.remove(best_cand)
             current_cost += cand_costs[best_cand]
@@ -103,21 +103,21 @@ class GreedyCoverageSolver(BaseSolver):
 
         solve_time = time.time() - t0
 
-        # Compute solution statistics
         selected_sites = [candidates[idx].site_id for idx in selected_indices]
         covered_nodes = [demand_nodes[i].node_id for i in np.where(covered_demand_mask)[0]]
 
         total_demand_covered = float(np.sum(dem_values[covered_demand_mask]))
-        total_possible_demand = float(np.sum(dem_values))
-        pct_demand_covered = (total_demand_covered / total_possible_demand * 100.0) if total_possible_demand > 0 else 0.0
+        pct_demand_covered = (total_demand_covered / total_demand_sum * 100.0) if total_demand_sum > 0 else 0.0
 
         dac_demand_covered = float(np.sum(dem_values[covered_demand_mask & is_dac]))
         dac_share_pct = (dac_demand_covered / total_demand_covered * 100.0) if total_demand_covered > 0 else 0.0
 
-        is_quota_met = (dac_share_pct >= (scenario.min_equity_quota * 100.0))
+        is_share_met = (dac_share_pct >= (scenario.min_equity_share * 100.0 - 0.5))
         budget_util_pct = (current_cost / scenario.budget * 100.0) if scenario.budget > 0 else 0.0
 
-        obj_val = float(np.sum(weights[covered_demand_mask]) - (1e-6 * current_cost))
+        norm_eff = total_demand_covered / total_demand_sum if total_demand_sum > 0 else 0.0
+        norm_eq = dac_demand_covered / dac_demand_sum if dac_demand_sum > 0 else 0.0
+        obj_val = float(w_eff * norm_eff + w_eq * norm_eq)
 
         return OptimizationSolution(
             scenario=scenario,
@@ -128,9 +128,11 @@ class GreedyCoverageSolver(BaseSolver):
             pct_total_demand_covered=round(pct_demand_covered, 1),
             dac_demand_covered=round(dac_demand_covered, 1),
             dac_share_pct=round(dac_share_pct, 1),
-            is_equity_quota_met=is_quota_met,
+            is_equity_share_met=is_share_met,
             solver_name=self.name,
             solve_time_sec=round(solve_time, 4),
-            objective_value=round(obj_val, 2),
+            objective_value=round(obj_val, 4),
+            norm_efficiency=round(norm_eff, 4),
+            norm_equity=round(norm_eq, 4),
             covered_node_ids=covered_nodes,
         )

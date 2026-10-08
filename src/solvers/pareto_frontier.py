@@ -33,13 +33,12 @@ class ParetoFrontierAnalyzer:
         frontier: List[ParetoPoint] = []
 
         for w in weights:
-            # Clone scenario with modified equity weight
             scenario = ScenarioConfig(
-                domain_id=base_scenario.domain_id,
+                sector_id=base_scenario.sector_id,
                 budget=base_scenario.budget,
                 max_facilities=base_scenario.max_facilities,
                 equity_weight=float(w),
-                min_equity_quota=0.0,  # Unconstrain quota during frontier generation to observe pure trade-off
+                min_equity_share=0.0,  # Unconstrain quota during frontier generation to observe pure trade-off
                 coverage_radius_miles=base_scenario.coverage_radius_miles,
                 min_spacing_miles=base_scenario.min_spacing_miles,
                 solver_type="greedy",
