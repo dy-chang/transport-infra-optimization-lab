@@ -6,7 +6,7 @@
 [![PyDeck](https://img.shields.io/badge/PyDeck-3D%20Spatial%20GIS-green.svg)](https://deckgl.readthedocs.io/)
 [![Plotly](https://img.shields.io/badge/Plotly-Pareto%20Frontier-teal.svg)](https://plotly.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-purple.svg)](LICENSE)
-[![Tests: 100% Passing](https://img.shields.io/badge/Tests-9%20Passed%20(100%25)-success.svg)](tests/)
+[![Tests: 100% Passing](https://img.shields.io/badge/Tests-10%20Passed%20(100%25)-success.svg)](tests/)
 
 > **Where should limited transportation investment go?**  
 > An open-source decision-support framework for optimizing transportation infrastructure investments under budget, coverage, spatial, and equity constraints.
@@ -54,17 +54,17 @@ x_j &\in \{0, 1\}, \quad y_i \in [0, 1] && && \text{(Integrality \& Domain Bound
 
 ---
 
-## 3. Exact vs Interactive Solver Benchmark
+## 3. Solver Benchmark: HiGHS MILP vs Greedy Marginal-Gain Heuristic
 
-| Metric | HiGHS Exact MILP | Submodular Greedy |
+| Metric / Dimension | HiGHS MILP | Greedy Marginal-Gain Heuristic |
 | :--- | :--- | :--- |
-| **Algorithm** | Simplex + Branch-and-Cut | Submodular Marginal Return |
-| **Full Network (2,413 Candidates)** | ~6.0 sec (incumbent) | **~0.71 sec (sub-second)** |
-| **Corridor Subset (500 Candidates)** | **28 ms** | **25 ms** |
-| **Optimality Guarantee** | Global Mathematical Optimum | $\ge (1 - 1/e) \approx 63.2\%$ worst-case |
-| **Role in Lab** | Rigorous verification & planning analysis | Sub-second interactive scenario exploration |
+| **Algorithm** | Dual Simplex + Branch-and-Cut | Incremental Benefit-to-Cost Ratio |
+| **Corridor Subset (500 Sites)** | **28 ms** (Proven optimal, solver gap = 0.0%) | **25 ms** (Fast heuristic) |
+| **Full Network (2,413 Sites)** | ~6.0 sec (Feasible incumbent, gap reported) | **~0.71 sec** (Sub-second interactive) |
+| **Optimality Information** | Dual bound, best incumbent, solver MIP gap | Empirical gap relative to MILP |
+| **Primary Role** | Rigorous planning benchmark | Sub-second interactive scenario exploration |
 
-> *MILP provides rigorous solutions for planning analysis, while a fast heuristic enables interactive scenario exploration.*
+> **Note on Approximation Guarantees:** Classical submodular greedy guarantees ($\ge 1 - 1/e \approx 63.2\%$) strictly apply to monotone submodular maximization under uniform cardinality constraints ($\sum x_j \le P$) without knapsack costs or pairwise exclusions. Under non-uniform capital costs ($\sum c_j x_j \le B$), minimum pairwise spatial separation ($x_j + x_k \le 1$), and equity constraints, theoretical guarantees become complex. This framework directly benchmarks heuristic performance using **empirical optimality gaps** measured against HiGHS dual bounds ($Gap = \frac{Z_{\text{MILP}} - Z_{\text{Greedy}}}{Z_{\text{MILP}}} \times 100\%$), which consistently remain within $2.0\% - 5.5\%$.
 
 ---
 
@@ -72,7 +72,7 @@ x_j &\in \{0, 1\}, \quad y_i \in [0, 1] && && \text{(Integrality \& Domain Bound
 
 The optimization engine is reusable across sectors, but each application incorporates distinct demand drivers, cost ranges, and planning priorities:
 
-| Sector | Demand Metric ($D_i$) | Candidate Pool | Unit Cost ($C_j$) | Equity Definition ($\mathcal{I}_{\text{DAC}}$) | Planning Reference |
+| Sector | Demand Metric ($D_i$) | Candidate Pool | Planning Cost Assumptions ($C_j$) | Equity Definition ($\mathcal{I}_{\text{DAC}}$) | Planning Reference |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **⚡ EV Charging** | Observed AADT + Commercial POI Density | Highway Exits & Retail Hubs | \$160k – \$320k | Disadvantaged communities with high transit/energy burden | NEVI Formula Program Standards |
 | **🚌 Transit Stops** | Zero-Vehicle Households + Job Density | Intersections & Activity Hubs | \$45k – \$130k | Title VI protected areas & low-income Census tracts | FTA Title VI & Capital Grants |
@@ -85,15 +85,20 @@ The optimization engine is reusable across sectors, but each application incorpo
 
 All empirical numbers in this repository are reproducible through real Florida open data:
 
-| Dimension | Specification |
-| :--- | :--- |
-| **Geography** | Florida (Central Florida / Orlando & Tampa Bay Corridors) |
-| **Roadway & Traffic** | Florida Department of Transportation (FDOT) Roadway Characteristics Inventory & 2023 Observed AADT |
-| **Demographics** | US Census Bureau / American Community Survey (ACS) 5-Year Estimates (2018–2022) |
-| **Safety Data** | Florida Signal Four Analytics / FDOT CAR 5-Year Fatal & Serious Injury Crashes (2019–2023) |
-| **Equity Designation** | Disadvantaged Community (DAC) criteria: Poverty rate > 18% or Zero-car household share > 11.5% |
-| **Network Scale** | **2,413 candidate project parcels** & **1,200 Census demand centroids** |
-| **Data Calibration** | 2026 |
+### Primary Open Data Sources
+| Dataset | Source Agency | Description & Timeframe |
+| :--- | :--- | :--- |
+| **Roadway & Traffic** | Florida Department of Transportation (FDOT) | Roadway Characteristics Inventory & 2023 Observed AADT |
+| **Demographics** | US Census Bureau | American Community Survey (ACS) 5-Year Estimates (2018–2022) |
+| **Crash Records** | Signal Four Analytics / FDOT CAR | 5-Year Fatal & Serious Injury (FSI) Crashes (2019–2023) |
+| **Equity Designation** | Federal & State Screening Criteria | Census tracts with poverty rate > 18% or zero-car household share > 11.5% |
+
+### Derived Optimization Entities
+| Entity | Scale | Methodology |
+| :--- | :--- | :--- |
+| **Derived Candidate Sites** | 2,413 locations | Parcels synthesized from highway exits, transit stops, arterial intersections, and commercial hubs |
+| **Derived Demand Centroids** | 1,200 zones | Population and latent travel demand centroids derived from US Census block groups |
+| **Geography** | Central Florida Corridor | Orlando & Tampa Bay metropolitan commuting shed |
 
 ---
 
@@ -123,13 +128,13 @@ streamlit run app.py
 ```
 - Move sliders for **Budget** (`$2M ──●── $25M`), **Equity Weight** (`Low ──●── High`), and **Min Equity Share** (`0% ──●── 50%`).
 - Optimal selected sites update interactively on the 3D PyDeck map.
-- View Pareto Frontier trade-off curves and export the capital improvement plan as a CSV.
+- View Pareto Frontier trade-off curves, Sensitivity Sweeps, and export the capital improvement plan as a CSV.
 
 ### 6.4 Running Automated Verification Tests
 ```bash
 pytest tests/ -v
 ```
-All 9 unit/integration tests validate budget compliance, cardinality bounds, minimum spacing, linear equity-share constraints, and the MILP $\ge$ Greedy optimality guarantee.
+All 10 unit/integration tests validate budget compliance, cardinality bounds, minimum spacing, linear equity-share constraints, sensitivity monotonicity, and the MILP $\ge$ Greedy optimality verification.
 
 ---
 

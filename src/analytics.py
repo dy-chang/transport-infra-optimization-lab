@@ -2,10 +2,10 @@
 Solution evaluation, optimality gap computation, and equity compliance analytics.
 """
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 import numpy as np
 
-from src.models import OptimizationSolution, ParetoPoint
+from src.models import OptimizationSolution, ParetoPoint, ScenarioConfig
 
 
 def compute_optimality_gap(mip_sol: OptimizationSolution, greedy_sol: OptimizationSolution) -> Dict[str, Any]:
@@ -54,3 +54,73 @@ def evaluate_equity_fairness(solution: OptimizationSolution) -> Dict[str, Any]:
         "dac_demand_covered": round(solution.dac_demand_covered, 1),
         "total_demand_covered": round(solution.total_demand_covered, 1),
     }
+
+
+def run_sensitivity_analysis(
+    scenario: ScenarioConfig,
+    candidates: List[Any],
+    demand_nodes: List[Any],
+    dist_cand_to_dem: np.ndarray,
+    dist_cand_to_cand: Optional[np.ndarray] = None,
+    parameter_name: str = "budget",
+    parameter_values: Optional[List[Any]] = None,
+    solver_type: str = "greedy",
+) -> List[Any]:
+    """
+    Parametric sensitivity analysis sweeping a specified decision or policy parameter.
+    Evaluates system performance trade-offs across budget levels, equity weights, coverage radii, etc.
+    """
+    from src.models import SensitivityResult
+
+    if parameter_values is None:
+        if parameter_name == "budget":
+            base_b = scenario.budget
+            parameter_values = [base_b * factor for factor in [0.25, 0.5, 0.75, 1.0, 1.5, 2.0]]
+        elif parameter_name == "equity_weight":
+            parameter_values = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+        elif parameter_name == "coverage_radius_miles":
+            parameter_values = [1.0, 1.5, 2.0, 2.5, 3.0, 4.0]
+        elif parameter_name == "max_facilities":
+            base_m = scenario.max_facilities
+            parameter_values = sorted(list({max(1, int(base_m * f)) for f in [0.2, 0.5, 0.8, 1.0, 1.5, 2.0]}))
+        elif parameter_name == "min_equity_share":
+            parameter_values = [0.1, 0.2, 0.3, 0.4, 0.5]
+        else:
+            raise ValueError(f"Unknown parameter_name: {parameter_name}")
+
+    if solver_type == "highs":
+        from src.solvers.highs_solver import HiGHSMIPSolver
+        solver = HiGHSMIPSolver()
+    else:
+        from src.solvers.greedy_solver import GreedyCoverageSolver
+        solver = GreedyCoverageSolver()
+
+    results: List[SensitivityResult] = []
+
+    for val in parameter_values:
+        scenario_dict = scenario.model_dump()
+        scenario_dict[parameter_name] = val
+        scenario_dict["solver_type"] = solver_type
+        mod_scenario = ScenarioConfig(**scenario_dict)
+
+        sol = solver.solve(
+            mod_scenario,
+            candidates,
+            demand_nodes,
+            dist_cand_to_dem,
+            dist_cand_to_cand,
+        )
+
+        results.append(
+            SensitivityResult(
+                parameter_name=parameter_name,
+                parameter_value=val,
+                total_demand_covered=sol.total_demand_covered,
+                dac_demand_covered=sol.dac_demand_covered,
+                dac_share_pct=sol.dac_share_pct,
+                total_cost=sol.total_cost,
+                facility_count=len(sol.selected_site_ids),
+            )
+        )
+
+    return results

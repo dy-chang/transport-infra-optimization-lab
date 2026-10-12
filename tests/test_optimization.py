@@ -21,7 +21,7 @@ from src.models import ScenarioConfig
 from src.solvers.greedy_solver import GreedyCoverageSolver
 from src.solvers.highs_solver import HiGHSMIPSolver
 from src.solvers.pareto_frontier import ParetoFrontierAnalyzer
-from src.analytics import compute_optimality_gap, evaluate_equity_fairness
+from src.analytics import compute_optimality_gap, evaluate_equity_fairness, run_sensitivity_analysis
 
 
 @pytest.fixture(scope="session")
@@ -122,8 +122,8 @@ def test_coverage_logic_correct(test_dataset):
         assert min_d <= radius + 1e-4, f"Node {n_id} marked covered but closest facility is {min_d:.3f} mi > {radius} mi"
 
 
-def test_milp_objective_ge_greedy_objective(test_dataset):
-    """Core Operations Research verification: Exact MILP objective must be >= Heuristic objective."""
+def test_optimal_milp_objective_ge_greedy_on_small_instance(test_dataset):
+    """Core Operations Research verification: On small instance solved to proven optimality (gap=0), MILP objective >= Heuristic."""
     candidates, demand_nodes, dist_cand_to_dem, dist_cand_to_cand = test_dataset
     scenario = ScenarioConfig(
         sector_id="EV_CHARGING",
@@ -139,10 +139,49 @@ def test_milp_objective_ge_greedy_objective(test_dataset):
     mip_sol = HiGHSMIPSolver().solve(scenario, candidates, demand_nodes, dist_cand_to_dem, dist_cand_to_cand)
     greedy_sol = GreedyCoverageSolver().solve(scenario, candidates, demand_nodes, dist_cand_to_dem, dist_cand_to_cand)
 
-    # HiGHS global branch-and-cut optimum must be >= Greedy (allowing negligible 1e-3 numerical tolerance)
-    assert mip_sol.objective_value >= greedy_sol.objective_value - 1e-3, (
+    # Verify HiGHS reached proven optimality on this instance
+    assert mip_sol.is_proven_optimal, f"Expected proven optimality, got gap={mip_sol.mip_gap}"
+    assert mip_sol.mip_gap is not None and mip_sol.mip_gap <= 1e-4
+
+    # HiGHS proven optimum must be >= Greedy
+    assert mip_sol.objective_value >= greedy_sol.objective_value - 1e-4, (
         f"MILP objective ({mip_sol.objective_value}) was strictly lower than Greedy ({greedy_sol.objective_value})"
     )
+
+
+def test_sensitivity_analysis_monotonicity(test_dataset):
+    """Parametric sensitivity test: Total demand covered should be monotonically non-decreasing with increasing budget."""
+    candidates, demand_nodes, dist_cand_to_dem, dist_cand_to_cand = test_dataset
+    scenario = ScenarioConfig(
+        sector_id="EV_CHARGING",
+        budget=5_000_000.0,
+        max_facilities=20,
+        coverage_radius_miles=2.5,
+    )
+    budgets = [500_000.0, 1_500_000.0, 3_000_000.0, 6_000_000.0, 10_000_000.0]
+    results = run_sensitivity_analysis(
+        scenario=scenario,
+        candidates=candidates,
+        demand_nodes=demand_nodes,
+        dist_cand_to_dem=dist_cand_to_dem,
+        dist_cand_to_cand=dist_cand_to_cand,
+        parameter_name="budget",
+        parameter_values=budgets,
+        solver_type="greedy",
+    )
+
+    covered_demands = [r.total_demand_covered for r in results]
+    costs = [r.total_cost for r in results]
+
+    # Verify non-decreasing coverage with budget expansion
+    for i in range(len(covered_demands) - 1):
+        assert covered_demands[i + 1] >= covered_demands[i] - 1e-4, (
+            f"Coverage decreased when budget increased: {covered_demands[i]} -> {covered_demands[i+1]}"
+        )
+        assert costs[i + 1] >= costs[i] - 1e-4, (
+            f"Cost decreased when budget increased: {costs[i]} -> {costs[i+1]}"
+        )
+
 
 
 def test_infeasible_tight_scenario_handling(test_dataset):

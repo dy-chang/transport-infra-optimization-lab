@@ -23,7 +23,7 @@ from src.models import ScenarioConfig
 from src.solvers.greedy_solver import GreedyCoverageSolver
 from src.solvers.highs_solver import HiGHSMIPSolver
 from src.solvers.pareto_frontier import ParetoFrontierAnalyzer
-from src.analytics import compute_optimality_gap, evaluate_equity_fairness
+from src.analytics import compute_optimality_gap, evaluate_equity_fairness, run_sensitivity_analysis
 
 st.set_page_config(
     page_title="Transportation Infrastructure Optimization Lab",
@@ -71,7 +71,7 @@ with st.sidebar.expander("ℹ️ Sector Planning Model Details", expanded=False)
     st.write(f"**Policy Framework**: {profile.policy_reference}")
     st.write(f"**Demand Metrics**: {', '.join(profile.demand_components)}")
     st.write(f"**Equity Target**: {', '.join(profile.equity_components)}")
-    st.write(f"**Unit Cost**: ${profile.unit_cost_min:,.0f} – ${profile.unit_cost_max:,.0f}")
+    st.write(f"**Unit Cost (Planning Assumptions)**: ${profile.unit_cost_min:,.0f} – ${profile.unit_cost_max:,.0f}")
 
 st.sidebar.subheader("💰 Capital Budget & Facilities")
 budget = st.sidebar.slider(
@@ -132,7 +132,7 @@ min_spacing = st.sidebar.slider(
 solver_mode = st.sidebar.radio(
     "Optimization Engine:",
     options=["greedy", "highs"],
-    format_func=lambda x: "⚡ Fast Submodular Greedy (Sub-second interactive)" if x == "greedy" else "🎯 Exact HiGHS MIP (Global Optimum)"
+    format_func=lambda x: "⚡ Greedy Marginal-Gain Heuristic (Sub-second interactive)" if x == "greedy" else "🎯 HiGHS MILP Solver (Rigorous Branch-and-Cut)"
 )
 
 
@@ -202,10 +202,11 @@ with k5:
 st.markdown("---")
 
 # Main Dashboard Tabs
-tab_map, tab_pareto, tab_comparison, tab_table, tab_provenance = st.tabs([
+tab_map, tab_pareto, tab_sensitivity, tab_comparison, tab_table, tab_provenance = st.tabs([
     "🗺️ Spatial Allocation (PyDeck 3D)",
     "📈 Pareto Frontier (Efficiency vs Equity)",
-    "⚖️ Exact MIP vs Heuristic Benchmark",
+    "📊 Sensitivity Analysis (Parametric Sweep)",
+    "⚖️ HiGHS MILP vs Heuristic Benchmark",
     "📋 Funded Project Program",
     "📚 Data Provenance & Methodology"
 ])
@@ -356,34 +357,108 @@ with tab_pareto:
 
     st.dataframe(p_df, use_container_width=True)
 
-with tab_comparison:
-    st.subheader("Operations Research Benchmark: HiGHS Exact MIP vs Submodular Greedy")
+with tab_sensitivity:
+    st.subheader("Parametric Sensitivity Analysis")
     st.markdown("""
-    Direct mathematical comparison between global branch-and-cut optimization and the submodular greedy heuristic.  
-    *MILP provides rigorous solutions for planning analysis, while a fast heuristic enables interactive scenario exploration.*
+    Evaluate how infrastructure investment returns vary across budget thresholds, equity priority weights, and coverage radii.
+    """)
+
+    sens_col1, sens_col2 = st.columns([1, 2])
+    with sens_col1:
+        param_to_sweep = st.selectbox(
+            "Sweep Parameter:",
+            options=["budget", "equity_weight", "coverage_radius_miles", "max_facilities"],
+            format_func=lambda x: {
+                "budget": "Capital Budget ($)",
+                "equity_weight": "Equity Weight (w_eq)",
+                "coverage_radius_miles": "Coverage Service Radius (miles)",
+                "max_facilities": "Max Facilities Funded (P)"
+            }[x]
+        )
+        sweep_solver = st.radio(
+            "Sensitivity Solver:",
+            options=["greedy", "highs"],
+            format_func=lambda x: "⚡ Greedy (Instant Sweep)" if x == "greedy" else "🎯 HiGHS (Branch-and-Cut Sweep)"
+        )
+        run_sens_btn = st.button("📊 Run Sensitivity Sweep", type="primary")
+
+    with sens_col2:
+        if run_sens_btn:
+            with st.spinner("Computing parametric sensitivity sweep..."):
+                sens_results = run_sensitivity_analysis(
+                    scenario=scenario,
+                    candidates=candidates,
+                    demand_nodes=demand_nodes,
+                    dist_cand_to_dem=dist_cand_to_dem,
+                    dist_cand_to_cand=dist_cand_to_cand,
+                    parameter_name=param_to_sweep,
+                    solver_type=sweep_solver,
+                )
+
+                s_df = pd.DataFrame([
+                    {
+                        "Parameter Value": r.parameter_value if param_to_sweep != "budget" else f"${r.parameter_value/1_000_000:.1f}M",
+                        "Raw Value": r.parameter_value,
+                        "Total Demand Covered": r.total_demand_covered,
+                        "DAC Demand Covered": r.dac_demand_covered,
+                        "DAC Share %": r.dac_share_pct,
+                        "Total Cost ($M)": r.total_cost / 1_000_000.0,
+                        "Funded Facilities": r.facility_count,
+                    }
+                    for r in sens_results
+                ])
+
+                fig_sens = px.line(
+                    s_df,
+                    x="Raw Value",
+                    y=["Total Demand Covered", "DAC Demand Covered"],
+                    markers=True,
+                    title=f"Coverage Response across {param_to_sweep}",
+                    labels={"Raw Value": param_to_sweep, "value": "Demand Covered"},
+                )
+                st.plotly_chart(fig_sens, use_container_width=True)
+                st.dataframe(s_df.drop(columns=["Raw Value"]), use_container_width=True)
+        else:
+            st.info("Select a parameter and click **Run Sensitivity Sweep** to analyze parameter responsiveness.")
+
+with tab_comparison:
+    st.subheader("Operations Research Benchmark: HiGHS MILP vs Greedy Heuristic")
+    st.markdown("""
+    Direct mathematical comparison between branch-and-cut optimization and the marginal-gain heuristic.  
+    *HiGHS MILP provides rigorous planning benchmarks with verifiable solver gap bounds, while the greedy heuristic enables sub-second interactive exploration.*
     """)
 
     c_bench1, c_bench2 = st.columns([1, 1])
     with c_bench1:
         st.markdown("""
-        | Metric | HiGHS Exact MILP | Submodular Greedy |
+        | Dimension | HiGHS MILP | Greedy Marginal-Gain Heuristic |
         | :--- | :--- | :--- |
-        | **Algorithm** | Simplex + Branch-and-Cut | Submodular Marginal Return |
-        | **Optimality Guarantee** | Global Mathematical Optimum | $\ge (1 - 1/e) \approx 63.2\%$ worst-case |
-        | **Solve Time** | Rigorous Planning Analysis | Sub-second Interactive Exploration |
+        | **Algorithm** | Simplex + Branch-and-Cut | Incremental Benefit-to-Cost Ratio |
+        | **500-site benchmark** | Proven optimal (solver gap = 0.0%) | Fast heuristic |
+        | **Full network (2,413 sites)** | Best incumbent within time limit | Fast heuristic |
+        | **Optimality information** | Dual bound, best incumbent, MIP gap | Empirical gap relative to MILP |
+        | **Primary role** | Rigorous planning benchmark | Sub-second interactive exploration |
         """)
 
     with c_bench2:
         if st.button("🚀 Run Live Solver Comparison on Current Scenario"):
-            with st.spinner("Executing HiGHS Branch-and-Cut and Submodular Greedy..."):
+            with st.spinner("Executing HiGHS Branch-and-Cut and Greedy Heuristic..."):
                 mip_sol = HiGHSMIPSolver().solve(scenario, candidates, demand_nodes, dist_cand_to_dem, dist_cand_to_cand)
                 grd_sol = GreedyCoverageSolver().solve(scenario, candidates, demand_nodes, dist_cand_to_dem, dist_cand_to_cand)
                 gap = compute_optimality_gap(mip_sol, grd_sol)
 
-                st.write(f"**HiGHS Runtime**: {gap['mip_runtime_sec']:.3f} s | **Objective**: {gap['mip_objective']:.4f}")
-                st.write(f"**Greedy Runtime**: {gap['greedy_runtime_sec']*1000:.1f} ms | **Objective**: {gap['greedy_objective']:.4f}")
-                st.write(f"**Optimality Gap**: {gap['optimality_gap_pct']:.2f}% | **Speedup**: {gap['speedup_factor']:.0f}x")
-                st.write(f"**Site Agreement**: {gap['solution_agreement_pct']}% of selected locations match.")
+                st.write(f"**HiGHS Runtime**: {mip_sol.solve_time_sec:.3f} s")
+                st.write(f"**HiGHS Incumbent Objective**: {mip_sol.objective_value:.4f}")
+                if mip_sol.best_bound is not None:
+                    st.write(f"**HiGHS Dual Bound**: {mip_sol.best_bound:.4f}")
+                if mip_sol.mip_gap is not None:
+                    st.write(f"**HiGHS Solver MIP Gap**: {mip_sol.mip_gap * 100:.2f}% ({'Proven Global Optimum' if mip_sol.is_proven_optimal else 'Feasible Incumbent'})")
+                st.markdown("---")
+                st.write(f"**Greedy Runtime**: {grd_sol.solve_time_sec * 1000:.1f} ms")
+                st.write(f"**Greedy Objective**: {grd_sol.objective_value:.4f}")
+                st.write(f"**Empirical Gap**: {gap['optimality_gap_pct']:.2f}%")
+                st.write(f"**Speedup Factor**: {gap['speedup_factor']:.0f}x faster")
+                st.write(f"**Site Agreement**: {gap['solution_agreement_pct']:.1f}% matching locations")
 
 with tab_table:
     st.subheader("Capital Investment Program: Selected Facility Projects")
@@ -411,14 +486,15 @@ with tab_table:
 with tab_provenance:
     st.subheader("Open Data Provenance & Methodology")
     st.markdown(f"""
-    ### Data Sources & Attribution
+    ### Primary Raw Open Data Sources
     - **Roadway Network & Traffic Counts**: {DATA_PROVENANCE['fdot_roadway']}
     - **Socio-Demographics & Vehicle Ownership**: {DATA_PROVENANCE['census_demographics']}
     - **Safety & Crash Records**: {DATA_PROVENANCE['crash_records']}
     - **Equity Screening**: {DATA_PROVENANCE['equity_designation']}
     
-    ### Geographic Scope & Scale
-    - **Geography**: {DATA_PROVENANCE['geography']}
-    - **Candidate Site Pool**: {DATA_PROVENANCE['candidate_sites_count']:,} potential locations
-    - **Demand Centroids**: {DATA_PROVENANCE['demand_nodes_count']:,} spatial census zones
+    ### Derived Optimization Network
+    - **Geographic Boundary**: {DATA_PROVENANCE['geography']}
+    - **Derived Candidate Sites**: {DATA_PROVENANCE['candidate_sites_count']:,} candidate locations derived from FDOT road intersections, transit hubs, and commercial corridors.
+    - **Derived Demand Nodes**: {DATA_PROVENANCE['demand_nodes_count']:,} demand centroids derived from US Census ACS block groups.
+    - **Cost Structure**: {DATA_PROVENANCE['cost_basis']}
     """)

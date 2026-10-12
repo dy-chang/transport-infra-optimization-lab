@@ -38,6 +38,8 @@ class ScenarioConfig(BaseModel):
     coverage_radius_miles: float = Field(default=2.5, gt=0.0)
     min_spacing_miles: float = Field(default=1.0, ge=0.0)
     solver_type: str = Field(default="greedy", pattern="^(highs|greedy)$")
+    cost_sensitive_mode: bool = False
+    cost_penalty_lambda: float = Field(default=1e-7, ge=0.0)
 
     @property
     def domain_id(self) -> str:
@@ -61,6 +63,9 @@ class OptimizationSolution:
     objective_value: float
     norm_efficiency: float = 0.0
     norm_equity: float = 0.0
+    best_bound: Optional[float] = None
+    mip_gap: Optional[float] = None
+    is_proven_optimal: bool = False
     covered_node_ids: List[str] = field(default_factory=list)
     optimality_gap_pct: Optional[float] = None
 
@@ -78,3 +83,14 @@ class ParetoPoint:
     total_cost: float
     selected_count: int
     dac_share_pct: float
+
+
+@dataclass
+class SensitivityResult:
+    parameter_name: str
+    parameter_value: Any
+    total_demand_covered: float
+    dac_demand_covered: float
+    dac_share_pct: float
+    total_cost: float
+    facility_count: int

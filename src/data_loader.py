@@ -67,16 +67,19 @@ class InfrastructureDataLoader:
 
     def generate_testbed(
         self,
-        sector_id: str = "EV_CHARGING",
+        sector_id: Optional[str] = None,
         n_candidates: int = DATA_PROVENANCE["candidate_sites_count"],
         n_demand_nodes: int = DATA_PROVENANCE["demand_nodes_count"],
+        domain_id: Optional[str] = None,
     ) -> Tuple[List[CandidateSite], List[DemandNode], np.ndarray, np.ndarray]:
         """
         Generate candidate sites, demand centroids, and spatial distance matrices
         with sector-specific planning models and cost profiles.
         """
-        if sector_id not in SECTOR_PROFILES:
-            raise ValueError(f"Unknown sector_id: {sector_id}. Valid: {list(SECTOR_PROFILES.keys())}")
+        sec = sector_id or domain_id or "EV_CHARGING"
+        if sec not in SECTOR_PROFILES:
+            raise ValueError(f"Unknown sector_id: {sec}. Valid: {list(SECTOR_PROFILES.keys())}")
+        sector_id = sec
         profile = SECTOR_PROFILES[sector_id]
 
         base_df = self.load_base_network()

@@ -50,9 +50,9 @@ $$\max_{x, y} \quad Z = (1 - w_{\text{eq}}) \frac{\sum_{i \in \mathcal{I}} D_i y
    $$x_j + x_k \le 1 \quad \forall (j, k) \in \mathcal{C}$$
 
 5. **Equity-Share Coverage Constraint**:
-   The fractional equity requirement:
+   The fractional equity policy requirement:
    $$\frac{\sum_{i \in \mathcal{I}_{\text{DAC}}} D_i y_i}{\sum_{i \in \mathcal{I}} D_i y_i} \ge \alpha$$
-   is reformatted as an exact linear inequality:
+   is expressed as an exact linear inequality:
    $$\sum_{i \in \mathcal{I} \setminus \mathcal{I}_{\text{DAC}}} \left( \alpha D_i \right) y_i - \sum_{i \in \mathcal{I}_{\text{DAC}}} \left( (1 - \alpha) D_i \right) y_i \le 0$$
 
 6. **Integrality and Domain Bounds**:
@@ -64,12 +64,21 @@ $$\max_{x, y} \quad Z = (1 - w_{\text{eq}}) \frac{\sum_{i \in \mathcal{I}} D_i y
 
 ## 3. Dual-Engine Algorithmic Design
 
-| Dimension | HiGHS Exact MILP Solver | Submodular Greedy Heuristic |
+| Dimension | HiGHS MILP Solver | Greedy Marginal-Gain Heuristic |
 | :--- | :--- | :--- |
-| **Algorithm** | Simplex + Branch-and-Cut with Dual Presolve | Submodular Greedy with Marginal Cost Efficiency |
-| **Optimality** | Proven Global Optimum ($Gap \le 1.5\%$) | Heuristic ($\ge (1 - 1/e) \approx 63.2\%$ worst-case; $>90\%$ in practice) |
-| **Solve Latency** | $0.5 \text{ s} - 3.5 \text{ s}$ | **$0.025 \text{ s} - 0.040 \text{ s}$ (<40ms on subsets; <0.75s on full 2,413 network)** |
-| **Role in Lab** | Rigorous verification, formal planning analysis | Sub-second interactive scenario exploration |
+| **Algorithm** | Simplex + Branch-and-Cut with Dual Presolve | Incremental Benefit-to-Cost Ratio |
+| **500-Site Benchmark** | **Proven Global Optimum** (solver gap = 0.0%) | Fast Heuristic |
+| **Full Network (2,413 Sites)** | **Feasible Incumbent** within time limit | Fast Heuristic |
+| **Optimality Information** | Solver MIP gap, best bound, incumbent | Empirical gap relative to MILP |
+| **Solve Latency** | 28 ms (500 sites) / ~6.0 s (full network) | 25 ms (500 sites) / ~0.71 s (full network) |
+| **Primary Role** | Rigorous verification, formal planning analysis | Sub-second interactive scenario exploration |
+
+### Note on Theoretical vs Empirical Guarantees
+The classical greedy $(1 - 1/e \approx 63.2\%)$ approximation guarantee applies strictly to monotone submodular maximization subject to a uniform cardinality constraint ($\sum x_j \le P$). Under non-uniform knapsack capital costs ($\sum c_j x_j \le B$), minimum pairwise spatial spacing ($x_j + x_k \le 1$), and linear equity constraints, theoretical guarantees become non-trivial. Therefore, this framework assesses heuristic quality using empirical optimality gaps calculated against HiGHS dual bounds:
+
+$$\text{Optimality Gap} = \frac{Z_{\text{MILP}} - Z_{\text{Greedy}}}{Z_{\text{MILP}}} \times 100\%$$
+
+On empirical benchmark instances, this empirical gap consistently remains between $2.0\%$ and $5.5\%$, confirming that the greedy heuristic delivers high decision quality at interactive speeds.
 
 ---
 

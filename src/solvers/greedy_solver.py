@@ -1,6 +1,6 @@
 """
-High-performance submodular greedy marginal coverage heuristic.
-Executes in median <30ms for sub-second interactive scenario exploration.
+High-performance greedy marginal-gain heuristic.
+Executes in median <30ms on corridor subsets for sub-second interactive scenario exploration.
 """
 
 import time
@@ -13,12 +13,12 @@ from src.solvers.base import BaseSolver
 
 class GreedyCoverageSolver(BaseSolver):
     """
-    Submodular Greedy Marginal Return Solver.
-    Selects candidate facilities iteratively based on maximum normalized incremental gain per dollar.
+    Greedy Marginal-Gain Heuristic Solver.
+    Iteratively funds candidate facilities with the highest incremental normalized coverage benefit per dollar.
     """
 
     def __init__(self):
-        super().__init__(name="Submodular Greedy Heuristic")
+        super().__init__(name="Greedy Marginal-Gain Heuristic")
 
     def solve(
         self,
@@ -40,7 +40,6 @@ class GreedyCoverageSolver(BaseSolver):
         total_demand_sum = float(np.sum(dem_values))
         dac_demand_sum = float(np.sum(dem_values[is_dac])) if np.any(is_dac) else 1.0
 
-        # Coverage adjacency matrix
         coverage_mask = dist_cand_to_dem <= scenario.coverage_radius_miles
 
         cand_lats = np.array([c.latitude for c in candidates])
@@ -86,7 +85,7 @@ class GreedyCoverageSolver(BaseSolver):
                 if marginal_gain <= 0:
                     continue
 
-                # Marginal benefit-to-cost ratio
+                # Benefit-to-cost ratio
                 ratio = marginal_gain / (cost_j ** 0.85)
                 if ratio > best_ratio:
                     best_ratio = ratio

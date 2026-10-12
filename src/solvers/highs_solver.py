@@ -1,6 +1,7 @@
 """
-Exact Branch-and-Cut Mixed-Integer Linear Programming (MILP) solver.
-Powered by native HiGHS through scipy.optimize.milp with sparse CSC constraint matrices.
+Mixed-Integer Linear Programming (MILP) solver powered by native HiGHS.
+Provides proven mathematical optimality on benchmark instances and best incumbent solutions
+under configurable execution budgets.
 """
 
 import time
@@ -15,13 +16,13 @@ from src.solvers.base import BaseSolver
 
 class HiGHSMIPSolver(BaseSolver):
     """
-    Exact Mathematical Programming Solver using HiGHS.
-    Solves the normalized Multi-Objective Maximum Coverage Location Problem (MCLP)
+    HiGHS Mixed-Integer Linear Programming (MILP) Solver.
+    Solves the Multi-Objective Maximum Coverage Location Problem (MCLP)
     with budget, cardinality, spacing, and linear equity-share constraints.
     """
 
     def __init__(self):
-        super().__init__(name="HiGHS Branch-and-Cut (MIP)")
+        super().__init__(name="HiGHS MILP")
 
     def solve(
         self,
@@ -45,12 +46,11 @@ class HiGHSMIPSolver(BaseSolver):
         dac_demand_sum = float(np.sum(dem_values[is_dac])) if np.any(is_dac) else 1.0
 
         # Normalized Objective Formulation:
-        # Maximize: (1 - w_eq) * (sum_i D_i * y_i / sum D_i) + w_eq * (sum_{i in DAC} D_i * y_i / sum_{DAC} D_i) - lambda * sum C_j * x_j
-        # Minimize: c^T z
+        # Maximize: (1 - w_eq) * (sum_i D_i * y_i / sum D_i) + w_eq * (sum_{i in DAC} D_i * y_i / sum_{DAC} D_i)
+        # Optional: - lambda * sum C_j * x_j (Cost-sensitive mode)
         w_eff = 1.0 - scenario.equity_weight
         w_eq = scenario.equity_weight
 
-        # Normalized demand coefficients for y_i
         y_coeff = np.zeros(n_dem, dtype=np.float64)
         if total_demand_sum > 0:
             y_coeff += (w_eff / total_demand_sum) * dem_values
@@ -58,8 +58,9 @@ class HiGHSMIPSolver(BaseSolver):
             y_coeff += (w_eq / dac_demand_sum) * (dem_values * is_dac)
 
         c = np.zeros(n_vars, dtype=np.float64)
-        c[:n_cand] = 1e-7 * cand_costs   # Negligible regularizer on capital expenditure
-        c[n_cand:] = -y_coeff            # Negate for minimization
+        if scenario.cost_sensitive_mode:
+            c[:n_cand] = scenario.cost_penalty_lambda * cand_costs
+        c[n_cand:] = -y_coeff  # Negate for minimization
 
         # Integrality: x_j are binary (1), y_i are continuous relaxed [0, 1] (0)
         integrality = np.zeros(n_vars, dtype=int)
@@ -91,7 +92,7 @@ class HiGHSMIPSolver(BaseSolver):
         row_ub.append(float(scenario.max_facilities))
         row_idx += 1
 
-        # 3. Coverage Coupling Constraints: y_i <= sum_{j in N(i)} x_j  <=>  y_i - sum_{j in N(i)} x_j <= 0
+        # 3. Coverage Coupling Constraints: y_i <= sum_{j in N(i)} x_j
         coverage_mask = dist_cand_to_dem <= scenario.coverage_radius_miles
         for i in range(n_dem):
             covering_cands = np.where(coverage_mask[i, :])[0]
@@ -129,6 +130,7 @@ class HiGHSMIPSolver(BaseSolver):
                 row_idx += 1
 
         # 5. Linear Reformulation of Equity-Share Constraint:
+        # sum_{i in DAC} D_i * y_i >= alpha * sum_i D_i * y_i
         alpha = scenario.min_equity_share
         if alpha > 0.02 and np.any(is_dac):
             for i in range(n_dem):
@@ -158,8 +160,12 @@ class HiGHSMIPSolver(BaseSolver):
             y_sol = np.clip(res.x[n_cand:], 0.0, 1.0)
             selected_indices = np.where(x_sol == 1)[0].tolist()
             covered_indices = np.where(y_sol >= 0.5)[0].tolist()
+            
+            # Extract solver bounds & status
+            is_optimal = bool(res.status == 0)
+            mip_gap = float(res.mip_gap) if hasattr(res, "mip_gap") and res.mip_gap is not None else 0.0
+            dual_bound = float(-res.mip_dual_bound) if hasattr(res, "mip_dual_bound") and res.mip_dual_bound is not None else None
         else:
-            # Fallback to greedy if infeasible
             from src.solvers.greedy_solver import GreedyCoverageSolver
             return GreedyCoverageSolver().solve(scenario, candidates, demand_nodes, dist_cand_to_dem, dist_cand_to_cand)
 
@@ -192,6 +198,9 @@ class HiGHSMIPSolver(BaseSolver):
             objective_value=round(obj_val, 4),
             norm_efficiency=round(norm_eff, 4),
             norm_equity=round(norm_eq, 4),
+            best_bound=round(dual_bound, 4) if dual_bound is not None else None,
+            mip_gap=round(mip_gap, 4),
+            is_proven_optimal=is_optimal,
             covered_node_ids=[demand_nodes[i].node_id for i in covered_indices],
-            optimality_gap_pct=0.0 if res.success else 1.5,
+            optimality_gap_pct=round(mip_gap * 100.0, 2) if mip_gap is not None else 0.0,
         )
